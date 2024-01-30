@@ -34,3 +34,4 @@ for b, p in zip(bits, probs):
     d_b = decoder.decode_bit(p)
     print("original == decoded: ",int(b) == int(d_b))
 
+

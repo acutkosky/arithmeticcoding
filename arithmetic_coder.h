@@ -2,11 +2,10 @@
 #define ENCODER_H
 
 
-//#include<ostream>
-//#include<istream>
 #include<cstdint>
 #include<vector>
 #include<string>
+#include<tuple>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -19,10 +18,12 @@ class Encoder {
   public:
     Encoder();
     void encode_bit(bool bit, float prediction);
-    void encode_bits(py::array_t<uint8_t> &bits, py::array_t<float> &predictions);
+    void encode_bytes(py::array_t<uint8_t> &bits_as_bytes, py::array_t<float> &predictions);
     void flush();
     py::array_t<uint8_t> get_encoded_data(void);
+    std::vector<uint8_t> get_encoded_data_vector(void);
     int encoded_size(void);
+    void reset(void);
 
   private:
     void flush_common_bytes();

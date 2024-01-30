@@ -1,7 +1,7 @@
 #include "arithmetic_coder.h"
 #include<iostream>
 #include<exception>
-// constructor for encoder class
+// constructor for encoder class:
 Encoder::Encoder()
     : encoded_data(), upper(UINT32_MAX), lower(0) {}
 
@@ -25,21 +25,77 @@ uint32_t high_precision_midpoint(uint32_t lower, uint32_t upper, uint32_t p) {
 }
 
 
-// void Encoder::encode_bits(const vector<bool> &bits, const vector<float>&predictions) {
-//   for(uint32_t i=0;i<predictions.size(); i++) {
-//     encode_bit((bits[i/8]>>(i%8)) & 1, predictions[i]);
-//   }
-// }
+void Encoder::reset(void) {
+  encoded_data.clear();
+  upper = UINT32_MAX;
+  lower = 0;
+}
 
-void Encoder::encode_bits(py::array_t<uint8_t> &bits_as_bytes, py::array_t<float> &predictions) {
+
+std::vector<py::array_t<uint8_t>> batch_encode_bytes(py::array_t<uint8_t> &bits_as_bytes,  py::array_t<float> &predictions) {
+  if (bits_as_bytes.ndim()  != predictions.ndim())
+    throw std::runtime_error("Number of dimensions must match");
+
+  for(unsigned int i=0; i< bits_as_bytes.ndim() - 1; i++) {
+    if (bits_as_bytes.shape(i) != predictions.shape(i))
+      throw std::runtime_error("input shapes must match");
+  }
+
+  if (bits_as_bytes.shape(bits_as_bytes.ndim()-1)*8 != predictions.shape(predictions.ndim()-1)) {
+    throw std::runtime_error("last dimension of bytes should be 1/8 last dimension of predictions");
+  }
+
+  int last_dim = bits_as_bytes.shape(bits_as_bytes.ndim()-1);
+
+  std::vector<int> bytes_shape;
+
+  bytes_shape.push_back(-1);
+  bytes_shape.push_back(last_dim);
+  
+  py::array_t<uint8_t> bytes_view = bits_as_bytes.reshape(bytes_shape);//py::make_tuple(-1, last_dim));//shape);//{-1, last_dim});
+  
+  std::vector<int> pred_shape;
+  pred_shape.push_back(-1);
+  pred_shape.push_back(last_dim*8);
+  py::array_t<float> pred_view = predictions.reshape(pred_shape);//py::make_tuple(-1, last_dim);//shape);//{-1, last_dim});
+
+  unsigned int num_rows = bytes_view.shape(0);
+
+  
+  Encoder encoder;
+
+  std::vector<py::array_t<uint8_t>> encoded_arrays;
+  auto unchecked_bytes_view = bytes_view.unchecked<2>();
+  auto unchecked_pred_view = pred_view.unchecked<2>();
+
+  for(int i=0; i<num_rows; i++) {
+    encoder.reset();
+    for(int j=0; j<last_dim; j++) {
+      for(int k=0; k<8; k++) {
+        encoder.encode_bit(
+          (unchecked_bytes_view(i,j)>>(7-k)) &1,
+          unchecked_pred_view(i,8*j+k)
+        );
+      }
+    }
+    encoder.flush();
+    encoded_arrays.push_back(encoder.get_encoded_data());
+  }
+
+
+  return encoded_arrays;
+}
+
+
+void Encoder::encode_bytes(py::array_t<uint8_t> &bits_as_bytes, py::array_t<float> &predictions) {
   if (bits_as_bytes.size() < predictions.size()/8) {
-    throw std::length_error("prediction length exceeds input bit string length!");
+    throw std::runtime_error("prediction length exceeds input bit string length!");
   }
   auto unchecked_bits_as_bytes = bits_as_bytes.unchecked<1>();
   auto unchecked_predictions = predictions.unchecked<1>();
   for(uint32_t i=0;i<predictions.size(); i++) {
     encode_bit(
-      (unchecked_bits_as_bytes(i/8)>>(i%8)) & 1,
+      (unchecked_bits_as_bytes(i/8)>>((7-i)%8)) & 1,
       unchecked_predictions(i));
   }
 }
@@ -89,6 +145,11 @@ py::array_t<uint8_t> Encoder::get_encoded_data(void) {
   uint8_t* ptr = static_cast<uint8_t*>(buffer_info.ptr);
   std::memcpy(ptr, encoded_data.data(), encoded_data.size() * sizeof(uint8_t));
   return result;
+}
+
+
+std::vector<uint8_t> Encoder::get_encoded_data_vector(void) {
+  return encoded_data;
 }
 
 Decoder::Decoder(py::array_t<uint8_t> _encoded_data)
@@ -194,10 +255,12 @@ PYBIND11_MODULE(arithmetic_coder, m) {
 
     )pbdoc";
 
+    m.def("batch_encode_bytes", &batch_encode_bytes);
+    
     py::class_<Encoder>(m, "Encoder")
       .def(py::init())
       .def("encode_bit", &Encoder::encode_bit)
-      .def("encode_bits", &Encoder::encode_bits)
+      .def("encode_bytes", &Encoder::encode_bytes)
       .def("flush", &Encoder::flush)
       .def("get_encoded_data", &Encoder::get_encoded_data)
       .def("encoded_size", &Encoder::encoded_size);
